@@ -29,6 +29,7 @@
 
 #include <list>
 #include <ostream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -63,6 +64,10 @@ enum BinaryOp {
 class Exp {
 public:
   virtual int accept(Visitor *visitor) = 0;
+  virtual int computeAddress(Visitor *visitor) {
+    throw std::runtime_error(
+        "Compute adress called on a non lvalue expression");
+  };
   virtual ~Exp() = 0;
   static std::string binopToChar(BinaryOp op);
 };
@@ -103,6 +108,7 @@ public:
   std::string value;
   IdExp(const std::string &v);
   int accept(Visitor *visitor) override;
+  int computeAddress(Visitor *visitor) override;
   ~IdExp();
 };
 
@@ -142,6 +148,7 @@ public:
   Exp *index;
   IndexExp(const std::string &name, Exp *index);
   int accept(Visitor *v) override;
+  int computeAddress(Visitor *visitor) override;
   ~IndexExp();
 };
 

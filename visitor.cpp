@@ -16,6 +16,7 @@
 int BinaryExp::accept(Visitor *v) { return v->visit(this); }
 int NumberExp::accept(Visitor *v) { return v->visit(this); }
 int IdExp::accept(Visitor *v) { return v->visit(this); }
+int IdExp::computeAddress(Visitor *v) { return v->computeAddress(this); }
 int Program::accept(Visitor *v) { return v->visit(this); }
 int PrintStm::accept(Visitor *v) { return v->visit(this); }
 int AssignStm::accept(Visitor *v) { return v->visit(this); }
@@ -33,6 +34,7 @@ int BreakStm::accept(Visitor *v) { return v->visit(this); }
 int SwitchStm::accept(Visitor *v) { return v->visit(this); }
 int UnaryExp::accept(Visitor *v) { return v->visit(this); }
 int IndexExp::accept(Visitor *v) { return v->visit(this); }
+int IndexExp ::computeAddress(Visitor *v) { return v->computeAddress(this); }
 
 // =============================================================================
 // Implementación de accept()
@@ -142,6 +144,12 @@ int TypeCheckerVisitor::visit(IdExp *exp) {
   }
   return 0;
 }
+
+// -----------------------------------------------------------------------------
+// (IdExp) — verifica que la variable esté declarada
+// -----------------------------------------------------------------------------
+
+int TypeCheckerVisitor::computeAddress(IdExp *exp) { return 0; }
 
 // -----------------------------------------------------------------------------
 // visit(AssignStm) — verifica variable y evalúa expresión
@@ -262,6 +270,8 @@ int TypeCheckerVisitor::visit(IndexExp *exp) {
   // TODO
   return 0;
 }
+
+int TypeCheckerVisitor::computeAddress(IndexExp *exp) { return 0; }
 
 int TypeCheckerVisitor::visit(NumberExp *exp) { return 0; }
 int TypeCheckerVisitor::visit(Program *p) { return 0; }
@@ -533,41 +543,50 @@ int GenCodeVisitor::visit(BinaryExp *exp) {
 // -----------------------------------------------------------------------------
 
 int GenCodeVisitor::visit(AssignStm *stm) {
-  // FIX
-  // Aqui se usa dynamic cast para diferenciar si es id o index pero esto no es
-  // practico Lo ideal seria tener un tipo de visit adicional en donde se
-  // regresa la ubicacion de memoria
   stm->e->accept(this);
-  if (auto id = dynamic_cast<IdExp *>(stm->target)) {
-    if (memoriaGlobal.count(id->value)) {
-      out << "  movq %rax, " << id->value << "(%rip)\n";
-    } else {
-      int off = memoria[id->value];
-      out << "  movq %rax, " << off << "(%rbp)\n";
-    }
-  } else if (auto idx = dynamic_cast<IndexExp *>(stm->target)) {
-    // 3) caso array[index]
-    // push rax of expr
-    // Not perfect as it usses a third register rdi
-    // OPTIMIZE
-    out << "  pushq %rax\n";
+  stm->target->computeAddress(this);
+  return 0;
+}
 
-    idx->index->accept(this);
+// -----------------------------------------------------------------------------
+// computeAdress(IdExp) — Asigna el rax hacia la posicion correcta de memoria
+// -----------------------------------------------------------------------------
 
-    out << "  movq %rax, %rdi\n"  // Saves the index in rdi
-        << "  popq %rax\n"        // pops the index to have the value to assign
-        << "  movq %rax, %rcx\n"; // Assigns the exp to rcx
-    if (memoriaGlobal.count(idx->name)) {
-      out << "  movq " << idx->name
-          << "(%rip), %rax\n"; // Assigns the array in memory to the index
-    } else {
-      int off = memoria[idx->name];
-      out << "  movq " << off
-          << "(%rbp), %rax\n"; // Assigns the array in memory to the index
-    }
-    out << "  movq %rcx, (%rax, %rdi, 8)\n"; // asssigns the rcx wo the  array
-                                             // in the correct offset
+int GenCodeVisitor::computeAddress(IdExp *id) {
+  if (memoriaGlobal.count(id->value)) {
+    out << "  movq %rax, " << id->value << "(%rip)\n";
+  } else {
+    int off = memoria[id->value];
+    out << "  movq %rax, " << off << "(%rbp)\n";
   }
+  return 0;
+}
+
+// -----------------------------------------------------------------------------
+// computeAdress(IndexExp) — Asigna el rax hacia la posicion correcta de memoria
+// -----------------------------------------------------------------------------
+
+int GenCodeVisitor::computeAddress(IndexExp *idx) {
+  // Not perfect as it usses a third register rdi
+  // OPTIMIZE
+  out << "  pushq %rax\n";
+
+  idx->index->accept(this);
+
+  out << "  movq %rax, %rdi\n"  // Saves the index in rdi
+      << "  popq %rax\n"        // pops the index to have the value to assign
+      << "  movq %rax, %rcx\n"; // Assigns the exp to rcx
+  if (memoriaGlobal.count(idx->name)) {
+    out << "  movq " << idx->name
+        << "(%rip), %rax\n"; // Assigns the array in memory to the index
+  } else {
+    int off = memoria[idx->name];
+    out << "  movq " << off
+        << "(%rbp), %rax\n"; // Assigns the array in memory to the index
+  }
+  out << "  movq %rcx, (%rax, %rdi, 8)\n"; // asssigns the rcx wo the  array
+                                           // in the correct offset
+
   return 0;
 }
 

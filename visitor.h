@@ -56,8 +56,10 @@ public:
   virtual int visit(BinaryExp *exp) = 0;
   virtual int visit(NumberExp *exp) = 0;
   virtual int visit(IdExp *exp) = 0;
+  virtual int computeAddress(IdExp *exp) = 0;
   virtual int visit(UnaryExp *exp) = 0;
   virtual int visit(IndexExp *exp) = 0;
+  virtual int computeAddress(IndexExp *exp) = 0;
   virtual int visit(Program *p) = 0;
   virtual int visit(PrintStm *stm) = 0;
   virtual int visit(WhileStm *stm) = 0;
@@ -104,8 +106,10 @@ public:
   int visit(BinaryExp *exp) override;
   int visit(NumberExp *exp) override;
   int visit(IdExp *exp) override;
+  int computeAddress(IdExp *exp) override;
   int visit(UnaryExp *exp) override;
   int visit(IndexExp *exp) override;
+  int computeAddress(IndexExp *exp) override;
   int visit(Program *p) override;
   int visit(PrintStm *stm) override;
   int visit(AssignStm *stm) override;
@@ -159,8 +163,10 @@ public:
   int visit(BinaryExp *exp) override;
   int visit(NumberExp *exp) override;
   int visit(IdExp *exp) override;
+  int computeAddress(IdExp *exp) override;
   int visit(UnaryExp *exp) override;
   int visit(IndexExp *exp) override;
+  int computeAddress(IndexExp *exp) override;
   int visit(Program *p) override;
   int visit(PrintStm *stm) override;
   int visit(AssignStm *stm) override;
