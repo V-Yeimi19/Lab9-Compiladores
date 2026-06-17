@@ -18,12 +18,18 @@
 
 #include "ast.h"
 #include "scanner.h"
+#include <set>
+#include <string>
 
 class Parser {
 private:
   Scanner *scanner; // Fuente de tokens
   Token *current;   // Token actual (lookahead)
   Token *previous;  // Token anterior (ya consumido)
+
+  // Nombres de structs ya declarados. Permite distinguir, al parsear 'new',
+  // entre 'new StructName {...}' (struct) y 'new int {...}' (lista).
+  std::set<std::string> structNames;
 
   // ---- Primitivas de consumo ----
   bool match(Token::Type ttype); // Consume el token si coincide

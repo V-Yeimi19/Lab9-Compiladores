@@ -336,6 +336,15 @@ int TypeCheckerVisitor::visit(StructNewExp *sn) {
     throw std::runtime_error("[TypeChecker] Struct no definido: '" +
                              sn->structName + "'");
   }
+  int nFields = structDefs[sn->structName].numFields();
+  if (!sn->initValues.empty() && (int)sn->initValues.size() != nFields) {
+    throw std::runtime_error(
+        "[TypeChecker] 'new " + sn->structName + "' recibió " +
+        std::to_string(sn->initValues.size()) + " valores pero el struct tiene " +
+        std::to_string(nFields) + " campos");
+  }
+  for (Exp *v : sn->initValues)
+    v->accept(this);
   return 0;
 }
 
@@ -369,6 +378,8 @@ int TypeCheckerVisitor::computeAddress(FieldAccessExp *fa) { return 0; }
 int TypeCheckerVisitor::visit(ExpMatrix2D *m) {
   m->rows->accept(this);
   m->cols->accept(this);
+  for (Exp *v : m->initValues)
+    v->accept(this);
   return 0;
 }
 
@@ -486,7 +497,7 @@ int GenCodeVisitor::visit(VarDec *stm) {
 // -----------------------------------------------------------------------------
 
 int GenCodeVisitor::visit(NumberExp *exp) {
-  out << " movq $" << exp->value << ", %rax\n";
+  out << "  movq $" << exp->value << ", %rax\n";
   return 0;
 }
 
@@ -499,7 +510,7 @@ int GenCodeVisitor::visit(ExpListSize *stm) {
   // TEST
   // Lista de Int: malloc de 8*n bytes
   stm->size->accept(this);
-  out << " movq $8, %rcx\n";
+  out << "  movq $8, %rcx\n";
   out << "  imulq %rcx, %rax\n";
   out << "  movq %rax, %rdi\n"
       << "  call malloc@PLT\n";
@@ -513,23 +524,26 @@ int GenCodeVisitor::visit(ExpListSize *stm) {
 // -----------------------------------------------------------------------------
 
 int GenCodeVisitor::visit(ExpListVals *stm) {
-  // TEST
-  // Lista de Int: malloc de 8*n bytes + almacenar cada entero
-  int n = stm->values.size();
-  out << "  movq $" << (n * 8) << ", %rdi\n"
-      << "  call malloc@PLT\n"
-      << "  pushq %rax\n";
-  for (size_t i = 0; i < n; ++i) {
+  // Lista con valores: malloc de n*8 bytes, guardar el puntero en la variable
+  // destino y luego escribir cada elemento como var[i] = values[i].
+  int n = (int)stm->values.size();
+  out << "  movq $" << n << ", %rax\n";
+  out << "  movq $8, %rcx\n";
+  out << "  imulq %rcx, %rax\n";
+  out << "  movq %rax, %rdi\n";
+  out << "  call malloc@PLT\n";
+  emitStoreToVar(assignTargetName);
+  for (int i = 0; i < n; ++i) {
+    stm->values[i]->accept(this); // valor → %rax
     out << "  pushq %rax\n";
-    stm->values[i]->accept(this); // → %rax = valor entero
-    out << "  movq %rax, %rcx\n";
-    // Pops to have the rax pointer saved at the start
+    out << "  movq $" << i << ", %rax\n"; // índice
+    out << "  movq %rax, %rdi\n";
     out << "  popq %rax\n";
-    // Uses rax to access the index values
-    out << "  movq %rcx, " << (i * 8) << "(%rax)\n";
+    out << "  movq %rax, %rcx\n";
+    emitLoadVar(assignTargetName);
+    out << "  movq %rcx, (%rax, %rdi, 8)\n";
   }
-
-  out << "  popq %rax\n";
+  assignHandled = true;
   return 0;
 }
 
@@ -539,9 +553,9 @@ int GenCodeVisitor::visit(ExpListVals *stm) {
 
 int GenCodeVisitor::visit(IdExp *exp) {
   if (memoriaGlobal.count(exp->value))
-    out << " movq " << exp->value << "(%rip), %rax\n";
+    out << "  movq " << exp->value << "(%rip), %rax\n";
   else
-    out << " movq " << memoria[exp->value] << "(%rbp), %rax\n";
+    out << "  movq " << memoria[exp->value] << "(%rbp), %rax\n";
   return 0;
 }
 
@@ -549,39 +563,37 @@ int GenCodeVisitor::visit(IdExp *exp) {
 int GenCodeVisitor::visit(UnaryExp *exp) {
   exp->operand->accept(this);
   int lbl = labelcont++;
-  out << " cmpq $0, %rax\n";
-  out << " je not_true_" << lbl << "\n";
-  out << " movq $0, %rax\n";
-  out << " jmp not_end_" << lbl << "\n";
+  out << "  cmpq $0, %rax\n";
+  out << "  je not_true_" << lbl << "\n";
+  out << "  movq $0, %rax\n";
+  out << "  jmp not_end_" << lbl << "\n";
   out << "not_true_" << lbl << ":\n";
-  out << " movq $1, %rax\n";
+  out << "  movq $1, %rax\n";
   out << "not_end_" << lbl << ":\n";
   return 0;
 }
 
-// visit(IndexExp) — operador para indices de listas
+// emitLoadVar / emitStoreToVar — acceso uniforme a una variable (global/local)
+void GenCodeVisitor::emitLoadVar(const std::string &name) {
+  if (memoriaGlobal.count(name))
+    out << "  movq " << name << "(%rip), %rax\n";
+  else
+    out << "  movq " << memoria[name] << "(%rbp), %rax\n";
+}
+
+void GenCodeVisitor::emitStoreToVar(const std::string &name) {
+  if (memoriaGlobal.count(name))
+    out << "  movq %rax, " << name << "(%rip)\n";
+  else
+    out << "  movq %rax, " << memoria[name] << "(%rbp)\n";
+}
+
+// visit(IndexExp) — lectura de elemento de lista: índice escalado (%rax,%rdi,8)
 int GenCodeVisitor::visit(IndexExp *exp) {
-  // TODO
-  // 1) Evaluar el índice → %rax
-  exp->index->accept(this);
-
-  // 2) Cargar la dirección base del array en %rbx
-  if (memoriaGlobal.count(exp->name)) {
-    out << "  movq " << exp->name << "(%rip), %rbx\n"; // global
-  } else {
-    int off = memoria[exp->name];
-    out << "  lea " << off << "(%rbp), %rbx\n"; // &var
-    out << "  movq (%rbx), %rbx\n";             // ptr heap
-  }
-
-  // 3) Determinar tamaño de elemento (por defecto 8 por enteros)
-  int esz = 8;
-
-  // 4) Indexación para enteros
-
-  out << "  salq $3, %rax\n";
-  out << "  addq %rax, %rbx\n";
-  out << "  movq (%rbx), %rax\n";
+  exp->index->accept(this);     // índice → %rax
+  out << "  movq %rax, %rdi\n"; // índice → %rdi
+  emitLoadVar(exp->name);       // puntero base → %rax
+  out << "  movq (%rax, %rdi, 8), %rax\n";
   return 0;
 }
 
@@ -592,67 +604,67 @@ int GenCodeVisitor::visit(IndexExp *exp) {
 
 int GenCodeVisitor::visit(BinaryExp *exp) {
   exp->left->accept(this);
-  out << " pushq %rax\n";
+  out << "  pushq %rax\n";
   exp->right->accept(this);
-  out << " movq %rax, %rcx\n";
-  out << " popq %rax\n";
+  out << "  movq %rax, %rcx\n";
+  out << "  popq %rax\n";
 
   switch (exp->op) {
   case PLUS_OP:
-    out << " addq %rcx, %rax\n";
+    out << "  addq %rcx, %rax\n";
     break;
   case MINUS_OP:
-    out << " subq %rcx, %rax\n";
+    out << "  subq %rcx, %rax\n";
     break;
   case MUL_OP:
-    out << " imulq %rcx, %rax\n";
+    out << "  imulq %rcx, %rax\n";
     break;
   case DIV_OP:
     // División entera con signo: idivq usa %rdx:%rax / %rcx
-    out << " cqto\n";       // sign-extend %rax → %rdx:%rax
-    out << " idivq %rcx\n"; // cociente en %rax
+    out << "  cqto\n";       // sign-extend %rax → %rdx:%rax
+    out << "  idivq %rcx\n"; // cociente en %rax
     break;
   case LE_OP:
-    out << " cmpq %rcx, %rax\n";
-    out << " movq $0, %rax\n";
-    out << " setl %al\n";
-    out << " movzbq %al, %rax\n";
+    out << "  cmpq %rcx, %rax\n";
+    out << "  movq $0, %rax\n";
+    out << "  setl %al\n";
+    out << "  movzbq %al, %rax\n";
     break;
   case GT_OP:
-    out << " cmpq %rcx, %rax\n";
-    out << " movq $0, %rax\n";
-    out << " setg %al\n";
-    out << " movzbq %al, %rax\n";
+    out << "  cmpq %rcx, %rax\n";
+    out << "  movq $0, %rax\n";
+    out << "  setg %al\n";
+    out << "  movzbq %al, %rax\n";
     break;
   case LEQ_OP:
-    out << " cmpq %rcx, %rax\n";
-    out << " movq $0, %rax\n";
-    out << " setle %al\n";
-    out << " movzbq %al, %rax\n";
+    out << "  cmpq %rcx, %rax\n";
+    out << "  movq $0, %rax\n";
+    out << "  setle %al\n";
+    out << "  movzbq %al, %rax\n";
     break;
   case GEQ_OP:
-    out << " cmpq %rcx, %rax\n";
-    out << " movq $0, %rax\n";
-    out << " setge %al\n";
-    out << " movzbq %al, %rax\n";
+    out << "  cmpq %rcx, %rax\n";
+    out << "  movq $0, %rax\n";
+    out << "  setge %al\n";
+    out << "  movzbq %al, %rax\n";
     break;
   case EQ_OP:
-    out << " cmpq %rcx, %rax\n";
-    out << " movq $0, %rax\n";
-    out << " sete %al\n";
-    out << " movzbq %al, %rax\n";
+    out << "  cmpq %rcx, %rax\n";
+    out << "  movq $0, %rax\n";
+    out << "  sete %al\n";
+    out << "  movzbq %al, %rax\n";
     break;
   case NE_OP:
-    out << " cmpq %rcx, %rax\n";
-    out << " movq $0, %rax\n";
-    out << " setne %al\n";
-    out << " movzbq %al, %rax\n";
+    out << "  cmpq %rcx, %rax\n";
+    out << "  movq $0, %rax\n";
+    out << "  setne %al\n";
+    out << "  movzbq %al, %rax\n";
     break;
   case AND_OP:
-    out << " andq %rcx, %rax\n";
+    out << "  andq %rcx, %rax\n";
     break;
   case OR_OP:
-    out << " orq %rcx, %rax\n";
+    out << "  orq %rcx, %rax\n";
     break;
   }
   return 0;
@@ -663,8 +675,16 @@ int GenCodeVisitor::visit(BinaryExp *exp) {
 // -----------------------------------------------------------------------------
 
 int GenCodeVisitor::visit(AssignStm *stm) {
+  // Exponer el nombre del destino si es una variable simple, para que los
+  // inicializadores 'new ...{}' emitan el patrón guardar-puntero + escribir.
+  assignTargetName = stm->target->lvalueName();
+  assignHandled = false;
   stm->e->accept(this);
-  stm->target->computeAddress(this);
+  // Si la expresión derecha no resolvió ya la asignación completa, almacenar.
+  if (!assignHandled)
+    stm->target->computeAddress(this);
+  assignTargetName.clear();
+  assignHandled = false;
   return 0;
 }
 
@@ -716,10 +736,10 @@ int GenCodeVisitor::computeAddress(IndexExp *idx) {
 
 int GenCodeVisitor::visit(PrintStm *stm) {
   stm->e->accept(this);
-  out << " movq %rax, %rsi\n";
-  out << " leaq print_fmt(%rip), %rdi\n";
-  out << " movq $0, %rax\n";
-  out << " call printf@PLT\n";
+  out << "  movq %rax, %rsi\n";
+  out << "  leaq print_fmt(%rip), %rdi\n";
+  out << "  movq $0, %rax\n";
+  out << "  call printf@PLT\n";
   return 0;
 }
 
@@ -742,10 +762,10 @@ int GenCodeVisitor::visit(Body *b) {
 int GenCodeVisitor::visit(IfStm *stm) {
   int lbl = labelcont++;
   stm->condition->accept(this);
-  out << " cmpq $0, %rax\n";
-  out << " je else_" << lbl << "\n";
+  out << "  cmpq $0, %rax\n";
+  out << "  je else_" << lbl << "\n";
   stm->then->accept(this);
-  out << " jmp endif_" << lbl << "\n";
+  out << "  jmp endif_" << lbl << "\n";
   out << "else_" << lbl << ":\n";
   if (stm->els)
     stm->els->accept(this);
@@ -768,12 +788,12 @@ int GenCodeVisitor::visit(WhileStm *stm) {
 
   stm->condition->accept(this);
 
-  out << " cmpq $0, %rax\n";
-  out << " je endwhile_" << lbl << "\n";
+  out << "  cmpq $0, %rax\n";
+  out << "  je endwhile_" << lbl << "\n";
 
   stm->b->accept(this);
 
-  out << " jmp while_" << lbl << "\n";
+  out << "  jmp while_" << lbl << "\n";
 
   out << "endwhile_" << lbl << ":\n";
 
@@ -788,7 +808,7 @@ int GenCodeVisitor::visit(WhileStm *stm) {
 
 int GenCodeVisitor::visit(ReturnStm *stm) {
   stm->e->accept(this);
-  out << " jmp .end_" << nombreFuncion << "\n";
+  out << "  jmp .end_" << nombreFuncion << "\n";
   return 0;
 }
 
@@ -808,16 +828,16 @@ int GenCodeVisitor::visit(FunDec *f) {
   // ---- Prólogo ----
   out << "\n.globl " << f->nombre << "\n";
   out << f->nombre << ":\n";
-  out << " pushq %rbp\n";
-  out << " movq %rsp, %rbp\n";
-  out << " subq $" << funcontador[f->nombre] * 8 << ", %rsp\n";
+  out << "  pushq %rbp\n";
+  out << "  movq %rsp, %rbp\n";
+  out << "  subq $" << funcontador[f->nombre] * 8 << ", %rsp\n";
 
   // Guardar parámetros en el frame local
   int nParams = static_cast<int>(f->Pnombres.size());
   for (int i = 0; i < nParams; i++) {
     memoria[f->Pnombres[i]] = offset;
     varTypes[f->Pnombres[i]] = f->Ptipos[i];
-    out << " movq " << argRegs[i] << ", " << offset << "(%rbp)\n";
+    out << "  movq " << argRegs[i] << ", " << offset << "(%rbp)\n";
     offset -= 8;
   }
 
@@ -831,8 +851,8 @@ int GenCodeVisitor::visit(FunDec *f) {
 
   // ---- Epílogo ----
   out << ".end_" << f->nombre << ":\n";
-  out << " leave\n";
-  out << " ret\n";
+  out << "  leave\n";
+  out << "  ret\n";
 
   entornoFuncion = false;
   return 0;
@@ -850,9 +870,9 @@ int GenCodeVisitor::visit(FcallExp *exp) {
   int nArgs = static_cast<int>(exp->argumentos.size());
   for (int i = 0; i < nArgs; i++) {
     exp->argumentos[i]->accept(this);
-    out << " movq %rax, " << argRegs[i] << "\n";
+    out << "  movq %rax, " << argRegs[i] << "\n";
   }
-  out << " call " << exp->nombre << "\n";
+  out << "  call " << exp->nombre << "\n";
   return 0;
 }
 
@@ -869,8 +889,8 @@ int GenCodeVisitor::visit(DoWhileStm *stm) {
 
   stm->condition->accept(this);
 
-  out << " cmpq $0, %rax\n";
-  out << " jne dowhile_" << lbl << "\n";
+  out << "  cmpq $0, %rax\n";
+  out << "  jne dowhile_" << lbl << "\n";
 
   out << "endwhile_" << lbl << ":\n";
 
@@ -886,7 +906,7 @@ int GenCodeVisitor::visit(BreakStm *stm) {
     exit(1);
   }
 
-  out << " jmp " << currentBreakLabel << "\n";
+  out << "  jmp " << currentBreakLabel << "\n";
 
   return 0;
 }
@@ -897,19 +917,19 @@ int GenCodeVisitor::visit(SwitchStm *stm) {
 
   stm->e->accept(this);
 
-  out << " movq %rax, %r10\n";
+  out << "  movq %rax, %r10\n";
 
   for (auto c : stm->cases) {
 
-    out << " movq $" << c->value << ", %rax\n";
-    out << " cmpq %rax, %r10\n";
-    out << " je case_" << lbl << "_" << c->value << "\n";
+    out << "  movq $" << c->value << ", %rax\n";
+    out << "  cmpq %rax, %r10\n";
+    out << "  je case_" << lbl << "_" << c->value << "\n";
   }
 
   if (!stm->default_body.empty())
-    out << " jmp default_" << lbl << "\n";
+    out << "  jmp default_" << lbl << "\n";
   else
-    out << " jmp endswitch_" << lbl << "\n";
+    out << "  jmp endswitch_" << lbl << "\n";
 
   std::string oldBreak = currentBreakLabel;
   currentBreakLabel = "endswitch_" + std::to_string(lbl);
@@ -921,7 +941,7 @@ int GenCodeVisitor::visit(SwitchStm *stm) {
     for (auto s : c->body)
       s->accept(this);
 
-    out << " jmp endswitch_" << lbl << "\n";
+    out << "  jmp endswitch_" << lbl << "\n";
   }
 
   if (!stm->default_body.empty()) {
@@ -959,9 +979,23 @@ int GenCodeVisitor::visit(StructDec *sd) {
 
 int GenCodeVisitor::visit(StructNewExp *sn) {
   int sz = structDefs[sn->structName].numFields() * 8;
-  out << "  movq $" << sz << ", %rdi\n"
-      << "  call malloc@PLT\n";
-  // puntero queda en %rax
+  out << "  movq $" << sz << ", %rdi\n";
+  out << "  call malloc@PLT\n";
+  if (sn->initValues.empty())
+    return 0; // puntero en %rax → lo almacena AssignStm
+  // Con inicializadores: guardar el puntero y escribir cada campo (índice = i)
+  emitStoreToVar(assignTargetName);
+  for (size_t i = 0; i < sn->initValues.size(); ++i) {
+    sn->initValues[i]->accept(this); // valor → %rax
+    out << "  pushq %rax\n";
+    out << "  movq $" << i << ", %rax\n"; // índice de campo
+    out << "  movq %rax, %rdi\n";
+    out << "  popq %rax\n";
+    out << "  movq %rax, %rcx\n";
+    emitLoadVar(assignTargetName);
+    out << "  movq %rcx, (%rax, %rdi, 8)\n";
+  }
+  assignHandled = true;
   return 0;
 }
 
@@ -970,15 +1004,11 @@ int GenCodeVisitor::visit(StructNewExp *sn) {
 // -----------------------------------------------------------------------------
 
 int GenCodeVisitor::visit(FieldAccessExp *fa) {
-  // Cargar el puntero al struct desde memoria local o global
-  if (memoriaGlobal.count(fa->obj))
-    out << "  movq " << fa->obj << "(%rip), %rax\n";
-  else
-    out << "  movq " << memoria[fa->obj] << "(%rbp), %rax\n";
-  // Calcular el offset del campo y cargar su valor
+  // Acceso a campo = indexación escalada con el índice del campo (struct ≡ lista)
   int idx = structDefs[varTypes[fa->obj]].fieldIndex(fa->field);
-  int fieldOff = idx * 8;
-  out << "  movq " << fieldOff << "(%rax), %rax\n";
+  out << "  movq $" << idx << ", %rdi\n"; // índice de campo → %rdi
+  emitLoadVar(fa->obj);                   // puntero al struct → %rax
+  out << "  movq (%rax, %rdi, 8), %rax\n";
   return 0;
 }
 
@@ -988,16 +1018,16 @@ int GenCodeVisitor::visit(FieldAccessExp *fa) {
 // -----------------------------------------------------------------------------
 
 int GenCodeVisitor::computeAddress(FieldAccessExp *fa) {
-  // Guardar el valor a asignar
-  out << "  pushq %rax\n";
-  // Cargar el puntero al struct
-  if (memoriaGlobal.count(fa->obj))
-    out << "  movq " << fa->obj << "(%rip), %rcx\n";
-  else
-    out << "  movq " << memoria[fa->obj] << "(%rbp), %rcx\n";
-  out << "  popq %rax\n";
+  // Escritura de campo = escritura escalada con el índice del campo.
+  // El valor a asignar llega en %rax (desde AssignStm).
   int idx = structDefs[varTypes[fa->obj]].fieldIndex(fa->field);
-  out << "  movq %rax, " << (idx * 8) << "(%rcx)\n";
+  out << "  pushq %rax\n";               // valor a asignar
+  out << "  movq $" << idx << ", %rax\n"; // índice de campo
+  out << "  movq %rax, %rdi\n";
+  out << "  popq %rax\n";
+  out << "  movq %rax, %rcx\n";          // valor → %rcx
+  emitLoadVar(fa->obj);                  // puntero al struct → %rax
+  out << "  movq %rcx, (%rax, %rdi, 8)\n";
   return 0;
 }
 
@@ -1006,26 +1036,43 @@ int GenCodeVisitor::computeAddress(FieldAccessExp *fa) {
 // -----------------------------------------------------------------------------
 
 int GenCodeVisitor::visit(ExpMatrix2D *m) {
-  // Evaluate rows → %rax, save on stack
-  m->rows->accept(this);
-  out << "  pushq %rax\n";        // stack: [rows]
-  // Evaluate cols → %rax, save on stack
-  m->cols->accept(this);
-  out << "  pushq %rax\n";        // stack: [cols, rows]  (cols at 0(%rsp), rows at 8(%rsp))
-  // Compute (rows*cols + 2)*8 for malloc
-  out << "  movq 0(%rsp), %rcx\n";   // rcx = cols
-  out << "  imulq 8(%rsp), %rcx\n";  // rcx = rows*cols
-  out << "  addq $2, %rcx\n";        // +2 header slots
-  out << "  imulq $8, %rcx\n";       // *8 bytes
-  out << "  movq %rcx, %rdi\n";
-  out << "  call malloc@PLT\n";      // rax = ptr
-  // Store cols at ptr[1]
-  out << "  popq %rcx\n";            // rcx = cols
-  out << "  movq %rcx, 8(%rax)\n";   // ptr[1] = cols
-  // Store rows at ptr[0]
-  out << "  popq %rcx\n";            // rcx = rows
-  out << "  movq %rcx, 0(%rax)\n";   // ptr[0] = rows
-  // %rax = pointer (left for assignment)
+  int cols = m->cols->constValue();
+  // Registrar columnas (constante) de la variable destino para indexar luego.
+  if (!assignTargetName.empty())
+    matrixCols[assignTargetName] = cols;
+  // malloc de rows*cols*8 bytes — arreglo plano, sin cabecera.
+  m->cols->accept(this); // cols → %rax (segunda dimensión, evaluada primero)
+  out << "  pushq %rax\n";
+  m->rows->accept(this); // rows → %rax
+  out << "  popq %rcx\n"; // cols → %rcx
+  out << "  imulq %rcx, %rax\n";
+  out << "  salq $3, %rax\n"; // *8
+  out << "  movq %rax, %rdi\n";
+  out << "  call malloc@PLT\n";
+  if (m->initValues.empty())
+    return 0; // puntero en %rax → lo almacena AssignStm
+  // Con inicializadores: guardar el puntero e inicializar en orden row-major
+  // como m[row][col] = valor, con índice lineal row*cols + col.
+  emitStoreToVar(assignTargetName);
+  for (size_t k = 0; k < m->initValues.size(); ++k) {
+    int row = (int)k / cols;
+    int col = (int)k % cols;
+    m->initValues[k]->accept(this); // valor → %rax
+    out << "  pushq %rax\n";
+    out << "  movq $" << row << ", %rax\n";
+    out << "  pushq %rax\n";
+    out << "  movq $" << col << ", %rax\n";
+    out << "  movq %rax, %rdi\n";
+    out << "  popq %rax\n";
+    out << "  movq $" << cols << ", %rcx\n";
+    out << "  imulq %rcx, %rax\n";
+    out << "  addq %rdi, %rax\n";
+    out << "  movq %rax, %rdi\n";
+    out << "  popq %rcx\n";
+    emitLoadVar(assignTargetName);
+    out << "  movq %rcx, (%rax, %rdi, 8)\n";
+  }
+  assignHandled = true;
   return 0;
 }
 
@@ -1034,25 +1081,20 @@ int GenCodeVisitor::visit(ExpMatrix2D *m) {
 // -----------------------------------------------------------------------------
 
 int GenCodeVisitor::visit(Matrix2DIndex *m) {
-  // Load base pointer into %rbx
-  if (memoriaGlobal.count(m->name))
-    out << "  movq " << m->name << "(%rip), %rbx\n";
-  else
-    out << "  movq " << memoria[m->name] << "(%rbp), %rbx\n";
-  // Load cols from ptr[1] into %r10
-  out << "  movq 8(%rbx), %r10\n";
-  // Evaluate row → %rax
-  m->row->accept(this);
-  out << "  imulq %r10, %rax\n";   // rax = row * cols
+  // Lectura m[row][col] sobre arreglo plano: índice lineal row*cols + col,
+  // con cols constante conocido de la declaración.
+  int cols = matrixCols[m->name];
+  m->row->accept(this); // row → %rax
   out << "  pushq %rax\n";
-  // Evaluate col → %rax
-  m->col->accept(this);
-  out << "  popq %rcx\n";
-  out << "  addq %rcx, %rax\n";    // rax = row*cols + col
-  out << "  addq $2, %rax\n";      // skip 2-element header
-  out << "  salq $3, %rax\n";      // * 8 bytes
-  out << "  addq %rbx, %rax\n";    // rax = address of element
-  out << "  movq (%rax), %rax\n";  // load value
+  m->col->accept(this); // col → %rax
+  out << "  movq %rax, %rdi\n"; // col → %rdi
+  out << "  popq %rax\n";       // row → %rax
+  out << "  movq $" << cols << ", %rcx\n";
+  out << "  imulq %rcx, %rax\n"; // row*cols
+  out << "  addq %rdi, %rax\n";  // + col
+  out << "  movq %rax, %rdi\n";  // índice lineal → %rdi
+  emitLoadVar(m->name);          // puntero base → %rax
+  out << "  movq (%rax, %rdi, 8), %rax\n";
   return 0;
 }
 
@@ -1061,28 +1103,21 @@ int GenCodeVisitor::visit(Matrix2DIndex *m) {
 // -----------------------------------------------------------------------------
 
 int GenCodeVisitor::computeAddress(Matrix2DIndex *m) {
-  out << "  pushq %rax\n";          // save value to store
-  // Load base pointer into %rbx
-  if (memoriaGlobal.count(m->name))
-    out << "  movq " << m->name << "(%rip), %rbx\n";
-  else
-    out << "  movq " << memoria[m->name] << "(%rbp), %rbx\n";
-  // Load cols from ptr[1]
-  out << "  movq 8(%rbx), %r10\n";
-  // Evaluate row → %rax
-  m->row->accept(this);
-  out << "  imulq %r10, %rax\n";
+  // Escritura m[row][col] = valor (en %rax) sobre arreglo plano.
+  int cols = matrixCols[m->name];
+  out << "  pushq %rax\n";       // valor a almacenar
+  m->row->accept(this);          // row → %rax
   out << "  pushq %rax\n";
-  // Evaluate col → %rax
-  m->col->accept(this);
-  out << "  popq %rcx\n";
-  out << "  addq %rcx, %rax\n";
-  out << "  addq $2, %rax\n";
-  out << "  salq $3, %rax\n";
-  out << "  addq %rbx, %rax\n";    // rax = address of element
-  out << "  movq %rax, %rcx\n";    // rcx = target address
-  out << "  popq %rax\n";          // restore value to store
-  out << "  movq %rax, (%rcx)\n";  // store value
+  m->col->accept(this);          // col → %rax
+  out << "  movq %rax, %rdi\n";  // col → %rdi
+  out << "  popq %rax\n";        // row → %rax
+  out << "  movq $" << cols << ", %rcx\n";
+  out << "  imulq %rcx, %rax\n"; // row*cols
+  out << "  addq %rdi, %rax\n";  // + col
+  out << "  movq %rax, %rdi\n";  // índice lineal → %rdi
+  out << "  popq %rcx\n";        // valor → %rcx
+  emitLoadVar(m->name);          // puntero base → %rax
+  out << "  movq %rcx, (%rax, %rdi, 8)\n";
   return 0;
 }
 

@@ -209,7 +209,22 @@ public:
   // Mapa variable → nombre de tipo (para acceso a campos de struct)
   std::unordered_map<std::string, std::string> varTypes;
 
+  // Número de columnas (constante) de cada variable matriz, para indexar
+  // m[i][j] como i*cols + j sobre un arreglo plano.
+  std::unordered_map<std::string, int> matrixCols;
+
+  // Estado de la asignación en curso: nombre de la variable destino si es un
+  // lvalue simple ("" si no), y bandera que indica que la expresión derecha ya
+  // emitió la asignación completa (inicializadores 'new ...{}').
+  std::string assignTargetName;
+  bool assignHandled = false;
+
   GenCodeVisitor(std::ostream &out) : out(out) {}
+
+  // Emite la carga del puntero/valor de una variable en %rax (global o local).
+  void emitLoadVar(const std::string &name);
+  // Emite el almacenamiento de %rax en una variable (global o local).
+  void emitStoreToVar(const std::string &name);
 
   // Punto de entrada de la generación
   int generar(Program *program);

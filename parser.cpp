@@ -88,6 +88,7 @@ void Parser::expect(Token::Type ttype) {
 
 // -----------------------------------------------------------------------------
 // StructDec → 'struct' ID (VarDec)+ 'endstruct'
+//           | 'struct' ID '{' VarDec (';' VarDec)* '}' ';'?
 // -----------------------------------------------------------------------------
 StructDec *Parser::parseStructDec() {
   expect(Token::STRUCT);
@@ -99,8 +100,7 @@ StructDec *Parser::parseStructDec() {
   StructDec *sd = new StructDec();
   sd->name = name;
 
-  // Parsear campos: uno o más 'var tipo campo'
-  while (check(Token::VAR)) {
+  auto pushFields = [&]() {
     VarDec *vd = parseVarDec();
     for (auto &varName : vd->vars) {
       StructField sf;
@@ -109,9 +109,27 @@ StructDec *Parser::parseStructDec() {
       sd->fields.push_back(sf);
     }
     delete vd;
+  };
+
+  if (match(Token::LBRACE)) {
+    // Forma con llaves: struct ID { var T f; var T f } ;
+    // Los campos se separan con ';' y el último puede no llevarlo.
+    while (check(Token::VAR)) {
+      pushFields();
+      if (!match(Token::SEMICOL))
+        break;
+    }
+    expect(Token::RBRACE);
+    match(Token::SEMICOL); // ';' final tras '}' (opcional)
+  } else {
+    // Forma con 'endstruct': struct ID var T f var T f endstruct
+    while (check(Token::VAR))
+      pushFields();
+    expect(Token::ENDSTRUCT);
   }
 
-  expect(Token::ENDSTRUCT);
+  // Registrar el nombre para que 'new <name> {...}' se trate como struct.
+  structNames.insert(name);
   return sd;
 }
 
@@ -588,24 +606,46 @@ Exp *Parser::parseF() {
         // new type[rows][cols] — 2D matrix
         Exp *dimB = parseCE();
         expect(Token::RBRACKET);
-        return new ExpMatrix2D(type, dimA, dimB);
+        ExpMatrix2D *m = new ExpMatrix2D(type, dimA, dimB);
+        // Inicializador opcional row-major: new int[r][c]{v0, v1, ...}
+        if (match(Token::LBRACE)) {
+          if (!check(Token::RBRACE)) {
+            m->initValues.push_back(parseCE());
+            while (match(Token::COMA))
+              m->initValues.push_back(parseCE());
+          }
+          expect(Token::RBRACE);
+        }
+        return m;
       }
       // new type[size] — 1D list
       return new ExpListSize(type, dimA);
     }
-    // a.2) id = new ID{CE (, CE)*}
+    // a.2) id = new StructName {CE (, CE)*}  |  id = new StructName {}
+    //      id = new tipo {CE (, CE)*}        (lista con valores iniciales)
     else if (match(Token::LBRACE)) {
-      match(Token::ID);
-      std::string type = previous->text;
+      if (structNames.count(type)) {
+        // Creación de struct con inicializadores opcionales de campos
+        StructNewExp *e = new StructNewExp(type);
+        if (!check(Token::RBRACE)) {
+          e->initValues.push_back(parseCE());
+          while (match(Token::COMA))
+            e->initValues.push_back(parseCE());
+        }
+        expect(Token::RBRACE);
+        return e;
+      }
+      // Lista con valores: new int {1, 2, 3}  (o lista vacía new int {})
       ExpListVals *e = new ExpListVals(type);
-      e->values.push_back(parseCE());
-      while (match(Token::COMA))
+      if (!check(Token::RBRACE)) {
         e->values.push_back(parseCE());
-
-      match(Token::RBRACE);
+        while (match(Token::COMA))
+          e->values.push_back(parseCE());
+      }
+      expect(Token::RBRACE);
       return e;
     }
-    // a.3) id = new StructName  (struct heap allocation)
+    // a.3) id = new StructName  (struct heap allocation sin inicializadores)
     else {
       return new StructNewExp(type);
     }

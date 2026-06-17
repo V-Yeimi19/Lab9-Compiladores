@@ -75,6 +75,12 @@ public:
     throw std::runtime_error(
         "Compute adress called on a non lvalue expression");
   };
+  // Nombre de la variable si la expresión es un lvalue simple (una variable);
+  // cadena vacía en caso contrario. Permite a GenCode distinguir 'x = ...' de
+  // 'x[i] = ...' / 'x.f = ...' sin recurrir a RTTI/dynamic_cast.
+  virtual std::string lvalueName() const { return ""; }
+  // Valor entero si la expresión es un literal constante; -1 si no lo es.
+  virtual int constValue() const { return -1; }
   virtual ~Exp() = 0;
   static std::string binopToChar(BinaryOp op);
 };
@@ -106,6 +112,7 @@ public:
   int value;
   NumberExp(int v);
   int accept(Visitor *visitor) override;
+  int constValue() const override { return value; }
   ~NumberExp();
 };
 
@@ -116,6 +123,7 @@ public:
   IdExp(const std::string &v);
   int accept(Visitor *visitor) override;
   int computeAddress(Visitor *visitor) override;
+  std::string lvalueName() const override { return value; }
   ~IdExp();
 };
 
@@ -159,10 +167,12 @@ public:
   ~FieldAccessExp() = default;
 };
 
-// ---- Creación de struct en heap: new StructName ----
+// ---- Creación de struct en heap: new StructName  |  new StructName {v, ...} ----
 class StructNewExp : public Exp {
 public:
   std::string structName;
+  // Valores iniciales opcionales para los campos, en orden de declaración.
+  std::vector<Exp *> initValues;
   explicit StructNewExp(const std::string &n);
   int accept(Visitor *v) override;
   ~StructNewExp() = default;
@@ -170,12 +180,14 @@ public:
 
 // ---- Asignación y acceso a matriz 2D: new type[rows][cols], m[row][col] ----
 
-// new type[rows][cols]  —  2D matrix heap allocation
+// new type[rows][cols]  |  new type[rows][cols]{v0, v1, ...}  —  2D matrix heap alloc
 class ExpMatrix2D : public Exp {
 public:
   std::string type;
   Exp *rows;
   Exp *cols;
+  // Valores iniciales opcionales en orden row-major (fila por fila).
+  std::vector<Exp *> initValues;
   ExpMatrix2D(const std::string &t, Exp *r, Exp *c);
   int accept(Visitor *v) override;
   ~ExpMatrix2D();
