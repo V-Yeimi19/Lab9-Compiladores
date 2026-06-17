@@ -444,46 +444,167 @@ Esto le indica al enlazador que la pila no debe ser ejecutable.
 
 ---
 
-## Casos de prueba (`inputs/`)
+## Detalles de implementación por feature
 
-| Archivo | Qué prueba |
-|---------|------------|
-| `input1.txt` | Bucle `while` con acumulador y `break` condicional |
-| `input2.txt` | Condicional `if-else` con operador `\|\|` |
-| `input3.txt` | Bucle `while` con `break` al llegar a un valor |
-| `input4.txt` | `switch` con `case`, `break` y `default` |
-| `input5.txt` | `do-while` anidado con `switch` interno |
-| `input6.txt` | Condicional `if-then` con expresión lógica compuesta (`&&` y `\|\|`) |
-| `input7.txt` | `do-while` con `switch` y variable de control externa |
-| `input8.txt` | Todos los operadores de comparación (`<`, `<=`, `>`, `>=`, `==`, `!=`) |
-| `input9.txt` | `if` anidado con condición compuesta `&&` |
-| `input10.txt` | `do-while` con `if` y `switch` combinados, condición con `\|\|` |
-| `input11.txt` | Arreglo 1D con `new int[N]`, acceso por índice y expresiones aritméticas como valores |
-| `input12.txt` | Arreglo 1D con `new int[N]` y asignación de elementos individuales |
-| `input13.txt` | Arreglo 1D con `new int{v1, v2, v3}` (valores iniciales literales) |
-| `input14.txt` | Arreglo 1D global con `new int{expr1, expr2}` (valores iniciales como expresiones) |
-| `input15.txt` | Struct básico (`Point` con campos `x` e `y`): `new`, asignación de campos y lectura |
-| `input16.txt` | Struct con función que recibe un struct como argumento y accede a sus campos |
-| `input17.txt` | Matriz 2D con `new int[3][3]`, asignación y lectura de elementos |
-| `input18.txt` | Matriz 2D llenada con bucles `while` anidados y lectura de posiciones específicas |
-| `input19.txt` | Punteros básicos: `&var`, `*p` para lectura y `*p = expr` para escritura |
-| `input20.txt` | Múltiples punteros: aritmética con valores desreferenciados y escritura a través de puntero |
+### Feature 1: Structs
+
+#### Parsing
+
+- **Token nuevo**: `STRUCT`, `ENDSTRUCT` (añadidos en `token.h`/`token.cpp` y reconocidos en `scanner.cpp`).
+- **Token para acceso de campo**: `DOT` (`.`).
+- **Nodos AST**: 
+  - `StructDec` — declaración de un tipo struct con lista de campos.
+  - `StructNewExp` — expresión `new NombreStruct` que asigna memoria en heap.
+  - `FieldAccessExp` — acceso de lectura/escritura a campo (`obj.field`).
+- **Modificaciones a `parser.cpp`**:
+  - `parseProgram()` ahora maneja `StructDec*` antes de `VarDec*` y `FunDec*`.
+  - `parseStructDec()` parsea la declaración de un struct: `struct ID (var tipo campo)+ endstruct`.
+  - `parseStm()` detecta `obj.field = expr` (acceso a campo en asignación).
+  - `parseF()` detecta `obj.field` en expresiones y `new StructName`.
+
+#### Análisis semántico
+
+- **TypeCheckerVisitor**:
+  - `structDefs` — mapa `nombre_struct → StructInfo` (lista de nombres y tipos de campos).
+  - `varTypes` — mapa `nombre_variable → tipo` (para resolver tipos de objetos struct).
+  - `visit(StructDec*)` registra la definición del struct.
+  - `visit(StructNewExp*)` verifica que el struct exista.
+  - `visit(FieldAccessExp*)` verifica que la variable sea un struct conocido y que el campo exista.
+
+#### Generación de código
+
+- **`visit(StructNewExp*)`**: emite `movq $(numCampos * 8), %rdi; call malloc@PLT`. El puntero se queda en `%rax`.
+- **`visit(FieldAccessExp*)`**: 
+  - Carga el puntero al struct (desde memoria local/global).
+  - Carga el valor del campo en el offset `(fieldIndex * 8)` del bloque.
+- **`computeAddress(FieldAccessExp*)`**: 
+  - Guarda el valor a escribir.
+  - Carga el puntero al struct.
+  - Escribe el valor en la dirección `struct_ptr + (fieldIndex * 8)`.
+
+#### Layout en memoria
+
+Cada struct ocupa `numCampos * 8` bytes en el heap. Los campos se organizan secuencialmente:
+
+```
+struct Point {int x; int y;}  →  8 bytes (x) + 8 bytes (y) = 16 bytes totales
+offset 0: x
+offset 8: y
+```
 
 ---
 
-## Estructura de archivos
+### Feature 2: Matrices 2D
+
+#### Parsing
+
+- **Nodos AST**:
+  - `ExpMatrix2D` — expresión `new int[rows][cols]`.
+  - `Matrix2DIndex` — acceso `mat[i][j]` (lectura/escritura).
+- **Modificaciones a `parser.cpp`**:
+  - En `parseF()`, tras `new int[dimA]`, se verifica si hay un segundo `[dimB]`. Si existe, se crea `ExpMatrix2D`; si no, `ExpListSize` (1D).
+  - En `parseStm()` y `parseF()`, el acceso `m[i][j]` se detecta tras `m[i]` cuando aparece un segundo `[`.
+
+#### Análisis semántico
+
+- **TypeCheckerVisitor**:
+  - `visit(ExpMatrix2D*)` verifica ambas expresiones de dimensión.
+  - `visit(Matrix2DIndex*)` verifica que la variable sea un arreglo y que los índices sean válidos.
+
+#### Generación de código
+
+- **`visit(ExpMatrix2D*)`**:
+  ```
+  1. Evaluar rows → %rax, push
+  2. Evaluar cols → %rax, push
+  3. Calcular (rows*cols + 2) * 8 bytes
+  4. malloc()
+  5. Escribir rows en ptr[0]
+  6. Escribir cols en ptr[1]
+  ```
+  El valor de retorno (puntero) se queda en `%rax`.
+
+- **`visit(Matrix2DIndex*)`** (lectura):
+  ```
+  1. Cargar puntero base en %rbx
+  2. Cargar cols desde ptr[1] en %r10
+  3. Evaluar row → %rax
+  4. Calcular offset = row * cols + col + 2
+  5. Saltar 3 (offset*8) bytes
+  6. Desreferenciar: movq (%rbx + offset*8), %rax
+  ```
+
+- **`computeAddress(Matrix2DIndex*)`** (escritura):
+  ```
+  1. Guardar valor a escribir
+  2. Cargar puntero base y cols (igual a arriba)
+  3. Calcular la dirección de destino
+  4. Escribir el valor
+  ```
+
+#### Layout en memoria
 
 ```
-.
-├── main.cpp          # Punto de entrada del compilador
-├── scanner.h / .cpp  # Analizador léxico
-├── token.h / .cpp    # Definición y representación de tokens
-├── parser.h / .cpp   # Parser de descenso recursivo
-├── ast.h / .cpp      # Nodos del AST
-├── visitor.h / .cpp  # TypeCheckerVisitor y GenCodeVisitor
-├── environment.h     # Tabla de símbolos con alcance léxico
-├── inputs/           # Archivos de entrada .fun y .s generados
-├── outputs/          # Copias de los .s generados por run_all_inputs.py
-├── specs/            # Especificaciones de implementación
-└── run_all_inputs.py # Script para compilar todos los inputs
+new int[3][4]  →  (3*4 + 2) * 8 = 160 bytes
+
+ptr[0]      = 3          (rows)
+ptr[1]      = 4          (cols)
+ptr[2]      = mat[0][0]
+ptr[3]      = mat[0][1]
+ptr[4]      = mat[0][2]
+ptr[5]      = mat[0][3]
+ptr[6]      = mat[1][0]
+...
+ptr[15]     = mat[2][3]
 ```
+
+Fórmula de acceso: `elemento(i,j) = ptr[2 + i*cols + j]`
+
+---
+
+### Feature 3: Punteros
+
+#### Parsing
+
+- **Token nuevo**: `ADDR` (`&`, cuando no va seguido de otro `&` que sería `&&`).
+- **Nodos AST**:
+  - `AddrOfExp` — expresión `&variable` (operador unario de dirección).
+  - `DerefExp` — expresión `*ptr` (operador unario de desreferencia).
+- **Modificaciones a `parser.cpp`**:
+  - En `parseF()`, el `match(Token::ADDR)` crea `AddrOfExp`.
+  - En `parseF()`, el `check(Token::MUL)` seguido de recursión crea `DerefExp` (porque en este contexto `*` no puede ser multiplicación).
+  - En `parseStm()`, se añade un caso `*expr = rhs` para asignaciones a través de puntero.
+  - En `parseBody()`, `isStmStart` incluye `Token::MUL` para reconocer `*ptr = ...` como inicio de sentencia.
+
+#### Análisis semántico
+
+- **TypeCheckerVisitor**:
+  - `visit(AddrOfExp*)` verifica que la variable exista.
+  - `visit(DerefExp*)` recorre la expresión del puntero.
+  - `computeAddress(DerefExp*)` es un no-op (el cálculo de la dirección ocurre en el generador).
+
+#### Generación de código
+
+- **`visit(AddrOfExp*)`**: emite `leaq var(%rip)` o `leaq var(%rbp)` según sea global o local. El resultado está en `%rax`.
+- **`visit(DerefExp*)`** (lectura):
+  ```
+  1. Evaluar la expresión del puntero → %rax (contiene una dirección)
+  2. movq (%rax), %rax  (desreferenciar)
+  ```
+- **`computeAddress(DerefExp*)`** (escritura):
+  ```
+  1. Guardar valor a escribir (pushq %rax)
+  2. Evaluar puntero → %rax
+  3. Mover dirección a %rcx (movq %rax, %rcx)
+  4. Restaurar valor (popq %rax)
+  5. Escribir (movq %rax, (%rcx))
+  ```
+
+#### Validación
+
+- **Variable `var ptr p`**: se trata como una variable normal de 64 bits. No requiere token especial; `ptr` es un ID común que se usa como tipo.
+- **Direcciones de variables locales**: se obtienen con `leaq offset(%rbp)`.
+- **Direcciones de variables globales**: se obtienen con `leaq var(%rip)` (RIP-relative addressing).
+- **Escritura indirecta**: permite modificar variables locales indirectamente a través de punteros.
+
+---
