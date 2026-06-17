@@ -1,0 +1,17 @@
+struct Rect
+    var int w
+    var int h
+endstruct
+
+fun int area(Rect r)
+    return(r.w * r.h)
+endfun
+
+fun int main()
+    var Rect rect;
+    rect = new Rect;
+    rect.w = 5;
+    rect.h = 8;
+    print(area(rect));
+    return(0)
+endfun

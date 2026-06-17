@@ -43,9 +43,10 @@ public:
     NE,  // !=
 
     // Operadores lógicos
-    AND, // &&
-    OR,  // ||
-    NOT, // !
+    AND,  // &&
+    OR,   // ||
+    NOT,  // !
+    ADDR, // &  (address-of; single & not followed by &)
 
     // Operadores de asignación
     ASSIGN, // =
@@ -84,6 +85,11 @@ public:
     FUN,    // fun
     ENDFUN, // endfun
     RETURN, // return
+
+    // Structs
+    STRUCT,    // struct
+    ENDSTRUCT, // endstruct
+    DOT,       // .
 
     // Especiales
     ERR, // Carácter no reconocido (error léxico)

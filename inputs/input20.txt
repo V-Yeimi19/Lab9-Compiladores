@@ -1,0 +1,12 @@
+fun int main()
+    var int a, b;
+    var ptr pa, pb;
+    a = 10;
+    b = 20;
+    pa = &a;
+    pb = &b;
+    print(*pa + *pb);
+    *pa = *pb * 2;
+    print(a);
+    return(0)
+endfun

@@ -87,10 +87,44 @@ void Parser::expect(Token::Type ttype) {
 // =============================================================================
 
 // -----------------------------------------------------------------------------
-// Program → VarDec* FunDec*
+// StructDec → 'struct' ID (VarDec)+ 'endstruct'
+// -----------------------------------------------------------------------------
+StructDec *Parser::parseStructDec() {
+  expect(Token::STRUCT);
+
+  if (!match(Token::ID))
+    error("nombre de struct después de 'struct'");
+  std::string name = previous->text;
+
+  StructDec *sd = new StructDec();
+  sd->name = name;
+
+  // Parsear campos: uno o más 'var tipo campo'
+  while (check(Token::VAR)) {
+    VarDec *vd = parseVarDec();
+    for (auto &varName : vd->vars) {
+      StructField sf;
+      sf.type = vd->type;
+      sf.name = varName;
+      sd->fields.push_back(sf);
+    }
+    delete vd;
+  }
+
+  expect(Token::ENDSTRUCT);
+  return sd;
+}
+
+// -----------------------------------------------------------------------------
+// Program → StructDec* VarDec* FunDec*
 // -----------------------------------------------------------------------------
 Program *Parser::parseProgram() {
   Program *p = new Program();
+
+  // Declaraciones de structs
+  while (check(Token::STRUCT)) {
+    p->sdlist.push_back(parseStructDec());
+  }
 
   // Declaraciones globales de variables
   while (check(Token::VAR)) {
@@ -220,7 +254,7 @@ Body *Parser::parseBody() {
   auto isStmStart = [&]() {
     return check(Token::ID) || check(Token::PRINT) || check(Token::RETURN) ||
            check(Token::IF) || check(Token::WHILE) || check(Token::BREAK) ||
-           check(Token::SWITCH) || check(Token::DO);
+           check(Token::SWITCH) || check(Token::DO) || check(Token::MUL);
   };
 
   // Al menos un statement
@@ -257,16 +291,44 @@ Body *Parser::parseBody() {
 // Stm → AssignStm | PrintStm | ReturnStm | IfStm | WhileStm
 // -----------------------------------------------------------------------------
 Stm *Parser::parseStm() {
+  // ---- Asignación por desreferencia: *F = CE ----
+  if (check(Token::MUL)) {
+    advance(); // consume '*'
+    Exp *inner = parseF();
+    DerefExp *lhs = new DerefExp(inner);
+    expect(Token::ASSIGN);
+    Exp *rhs = parseCE();
+    return new AssignStm(lhs, rhs);
+  }
+
   // ---- Asignación: ID '=' Exp or ID[CExp] '=' EXP ----
   if (match(Token::ID)) {
     std::string variable = previous->text;
 
-    // Check if ID[CE]
+    // Check if ID.field = CE
+    if (match(Token::DOT)) {
+      expect(Token::ID);
+      std::string field = previous->text;
+      Exp *lhs = new FieldAccessExp(variable, field);
+      expect(Token::ASSIGN);
+      Exp *rhs = parseCE();
+      return new AssignStm(lhs, rhs);
+    }
+
+    // Check if ID[CE] or ID[CE][CE]
     Exp *var = nullptr;
     if (match(Token::LBRACKET)) {
-      Exp *idx = parseCE();
+      Exp *first = parseCE();
       expect(Token::RBRACKET);
-      var = new IndexExp(variable, idx);
+      if (match(Token::LBRACKET)) {
+        // m[row][col] = CE
+        Exp *second = parseCE();
+        expect(Token::RBRACKET);
+        var = new Matrix2DIndex(variable, first, second);
+      } else {
+        // m[idx] = CE
+        var = new IndexExp(variable, first);
+      }
     } else {
       var = new IdExp(variable);
     }
@@ -474,8 +536,24 @@ Exp *Parser::parseT() {
   return l;
 }
 
-// F → NUM | 'true' | 'false' | '!' F | '(' CE ')' | ID ('(' Args ')')?
+// F → NUM | 'true' | 'false' | '!' F | '(' CE ')' | ID ('(' Args ')')? | '&' ID | '*' F
 Exp *Parser::parseF() {
+  // Address-of: &id
+  if (match(Token::ADDR)) {
+    if (!match(Token::ID))
+      error("identificador después de '&'");
+    return new AddrOfExp(previous->text);
+  }
+
+  // Pointer dereference in expression context: *F
+  // Safe here because parseF() is only entered to start a new factor;
+  // multiplication is handled in parseE() *between* two factors.
+  if (check(Token::MUL)) {
+    advance(); // consume '*'
+    Exp *inner = parseF();
+    return new DerefExp(inner);
+  }
+
   // Operador unario NOT
   if (match(Token::NOT)) {
     Exp *operand = parseF();
@@ -502,12 +580,18 @@ Exp *Parser::parseF() {
   if (match(Token::NEW)) {
     match(Token::ID);
     std::string type = previous->text;
-    // a.1) id = new ID[CE]
+    // a.1) id = new ID[CE] or id = new ID[rows][cols]
     if (match(Token::LBRACKET)) {
-      Exp *size = parseCE();
-      ExpListSize *e = new ExpListSize(type, size);
-      match(Token::RBRACKET);
-      return e;
+      Exp *dimA = parseCE();
+      expect(Token::RBRACKET);
+      if (match(Token::LBRACKET)) {
+        // new type[rows][cols] — 2D matrix
+        Exp *dimB = parseCE();
+        expect(Token::RBRACKET);
+        return new ExpMatrix2D(type, dimA, dimB);
+      }
+      // new type[size] — 1D list
+      return new ExpListSize(type, dimA);
     }
     // a.2) id = new ID{CE (, CE)*}
     else if (match(Token::LBRACE)) {
@@ -520,6 +604,10 @@ Exp *Parser::parseF() {
 
       match(Token::RBRACE);
       return e;
+    }
+    // a.3) id = new StructName  (struct heap allocation)
+    else {
+      return new StructNewExp(type);
     }
   }
 
@@ -539,12 +627,22 @@ Exp *Parser::parseF() {
       expect(Token::RPAREN);
       return fcall;
     }
-    // ID[CE]
+    // ID[CE] or ID[CE][CE]
     else if (match(Token::LBRACKET)) {
-      Exp *t = parseCE();
+      Exp *first = parseCE();
       expect(Token::RBRACKET);
-      IndexExp *index = new IndexExp(nom, t);
-      return index;
+      if (match(Token::LBRACKET)) {
+        Exp *second = parseCE();
+        expect(Token::RBRACKET);
+        return new Matrix2DIndex(nom, first, second);
+      }
+      return new IndexExp(nom, first);
+    }
+    // ID.field
+    else if (match(Token::DOT)) {
+      expect(Token::ID);
+      std::string field = previous->text;
+      return new FieldAccessExp(nom, field);
     }
     return new IdExp(nom);
   }

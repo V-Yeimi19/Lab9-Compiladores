@@ -36,6 +36,13 @@
 class Visitor;
 class VarDec;
 class Body;
+class StructDec;
+class StructNewExp;
+class FieldAccessExp;
+class ExpMatrix2D;
+class Matrix2DIndex;
+class AddrOfExp;
+class DerefExp;
 
 // =============================================================================
 // Operadores binarios
@@ -141,6 +148,51 @@ public:
   ~FcallExp() = default;
 };
 
+// ---- Acceso a campo de struct: obj.field ----
+class FieldAccessExp : public Exp {
+public:
+  std::string obj;
+  std::string field;
+  FieldAccessExp(const std::string &obj, const std::string &field);
+  int accept(Visitor *v) override;
+  int computeAddress(Visitor *v) override;
+  ~FieldAccessExp() = default;
+};
+
+// ---- Creación de struct en heap: new StructName ----
+class StructNewExp : public Exp {
+public:
+  std::string structName;
+  explicit StructNewExp(const std::string &n);
+  int accept(Visitor *v) override;
+  ~StructNewExp() = default;
+};
+
+// ---- Asignación y acceso a matriz 2D: new type[rows][cols], m[row][col] ----
+
+// new type[rows][cols]  —  2D matrix heap allocation
+class ExpMatrix2D : public Exp {
+public:
+  std::string type;
+  Exp *rows;
+  Exp *cols;
+  ExpMatrix2D(const std::string &t, Exp *r, Exp *c);
+  int accept(Visitor *v) override;
+  ~ExpMatrix2D();
+};
+
+// m[row][col]  —  2D matrix element access
+class Matrix2DIndex : public Exp {
+public:
+  std::string name;
+  Exp *row;
+  Exp *col;
+  Matrix2DIndex(const std::string &n, Exp *r, Exp *c);
+  int accept(Visitor *v) override;
+  int computeAddress(Visitor *v) override;
+  ~Matrix2DIndex();
+};
+
 // ---- Llamada indice de lista ----
 class IndexExp : public Exp {
 public:
@@ -150,6 +202,25 @@ public:
   int accept(Visitor *v) override;
   int computeAddress(Visitor *visitor) override;
   ~IndexExp();
+};
+
+// &id  —  address-of operator: yields the address of a variable
+class AddrOfExp : public Exp {
+public:
+  std::string var;
+  explicit AddrOfExp(const std::string &v);
+  int accept(Visitor *v) override;
+  ~AddrOfExp() = default;
+};
+
+// *expr  —  pointer dereference (read value or write target)
+class DerefExp : public Exp {
+public:
+  Exp *ptr;
+  explicit DerefExp(Exp *p);
+  int accept(Visitor *v) override;
+  int computeAddress(Visitor *v) override;
+  ~DerefExp();
 };
 
 // =============================================================================
@@ -286,9 +357,26 @@ public:
   ~FunDec() = default;
 };
 
-// ---- Programa: VarDec* FunDec* ----
+// ---- Campo de un struct ----
+struct StructField {
+  std::string type;
+  std::string name;
+};
+
+// ---- Declaración de struct ----
+class StructDec {
+public:
+  std::string name;
+  std::vector<StructField> fields;
+  StructDec() = default;
+  int accept(Visitor *v);
+  ~StructDec() = default;
+};
+
+// ---- Programa: StructDec* VarDec* FunDec* ----
 class Program {
 public:
+  std::list<StructDec *> sdlist;
   std::list<VarDec *> vdlist;
   std::list<FunDec *> fdlist;
   Program() = default;

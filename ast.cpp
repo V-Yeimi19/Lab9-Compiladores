@@ -166,3 +166,45 @@ Body::Body()
     : declarations(std::list<VarDec *>()), StmList(std::list<Stm *>()) {}
 
 Body::~Body() {}
+
+// =============================================================================
+// StructNewExp
+// =============================================================================
+
+StructNewExp::StructNewExp(const std::string &n) : structName(n) {}
+
+// =============================================================================
+// FieldAccessExp
+// =============================================================================
+
+FieldAccessExp::FieldAccessExp(const std::string &o, const std::string &f)
+    : obj(o), field(f) {}
+
+// =============================================================================
+// ExpMatrix2D
+// =============================================================================
+
+ExpMatrix2D::ExpMatrix2D(const std::string &t, Exp *r, Exp *c)
+    : type(t), rows(r), cols(c) {}
+ExpMatrix2D::~ExpMatrix2D() { delete rows; delete cols; }
+
+// =============================================================================
+// Matrix2DIndex
+// =============================================================================
+
+Matrix2DIndex::Matrix2DIndex(const std::string &n, Exp *r, Exp *c)
+    : name(n), row(r), col(c) {}
+Matrix2DIndex::~Matrix2DIndex() { delete row; delete col; }
+
+// =============================================================================
+// AddrOfExp
+// =============================================================================
+
+AddrOfExp::AddrOfExp(const std::string &v) : var(v) {}
+
+// =============================================================================
+// DerefExp
+// =============================================================================
+
+DerefExp::DerefExp(Exp *p) : ptr(p) {}
+DerefExp::~DerefExp() { delete ptr; }

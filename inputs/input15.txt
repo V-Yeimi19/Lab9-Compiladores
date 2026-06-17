@@ -1,0 +1,14 @@
+struct Point
+    var int x
+    var int y
+endstruct
+
+fun int main()
+    var Point p;
+    p = new Point;
+    p.x = 10;
+    p.y = 20;
+    print(p.x);
+    print(p.y);
+    return(0)
+endfun

@@ -46,6 +46,29 @@ class WhileStm;
 class ExpListSize;
 class ExpListVals;
 class WhileStm;
+class StructDec;
+class StructNewExp;
+class FieldAccessExp;
+class ExpMatrix2D;
+class Matrix2DIndex;
+class AddrOfExp;
+class DerefExp;
+
+// =============================================================================
+// StructInfo — información de un tipo struct (campos y sus índices)
+// =============================================================================
+
+struct StructInfo {
+  std::vector<std::string> fieldNames;
+  std::vector<std::string> fieldTypes;
+  int numFields() const { return (int)fieldNames.size(); }
+  int fieldIndex(const std::string &name) const {
+    for (int i = 0; i < (int)fieldNames.size(); i++)
+      if (fieldNames[i] == name)
+        return i;
+    return -1;
+  }
+};
 
 // =============================================================================
 // Clase base abstracta Visitor
@@ -75,6 +98,16 @@ public:
   virtual int visit(FcallExp *fc) = 0;
   virtual int visit(ReturnStm *r) = 0;
   virtual int visit(FunDec *fd) = 0;
+  virtual int visit(StructDec *sd) = 0;
+  virtual int visit(StructNewExp *sn) = 0;
+  virtual int visit(FieldAccessExp *fa) = 0;
+  virtual int computeAddress(FieldAccessExp *fa) = 0;
+  virtual int visit(ExpMatrix2D *m) = 0;
+  virtual int visit(Matrix2DIndex *m) = 0;
+  virtual int computeAddress(Matrix2DIndex *m) = 0;
+  virtual int visit(AddrOfExp *a) = 0;
+  virtual int visit(DerefExp *d) = 0;
+  virtual int computeAddress(DerefExp *d) = 0;
 };
 
 // =============================================================================
@@ -98,6 +131,12 @@ public:
 
   // Nombre de la función que se está analizando (para mensajes de error)
   std::string funcionActual;
+
+  // Mapa de tipos struct definidos
+  std::unordered_map<std::string, StructInfo> structDefs;
+
+  // Mapa variable → nombre de tipo (para acceso a campos de struct)
+  std::unordered_map<std::string, std::string> varTypes;
 
   // Punto de entrada del análisis semántico
   int TypeChecker(Program *program);
@@ -125,6 +164,16 @@ public:
   int visit(FcallExp *fc) override;
   int visit(ReturnStm *r) override;
   int visit(FunDec *fd) override;
+  int visit(StructDec *sd) override;
+  int visit(StructNewExp *sn) override;
+  int visit(FieldAccessExp *fa) override;
+  int computeAddress(FieldAccessExp *fa) override;
+  int visit(ExpMatrix2D *m) override;
+  int visit(Matrix2DIndex *m) override;
+  int computeAddress(Matrix2DIndex *m) override;
+  int visit(AddrOfExp *a) override;
+  int visit(DerefExp *d) override;
+  int computeAddress(DerefExp *d) override;
 };
 
 // =============================================================================
@@ -154,6 +203,12 @@ public:
                                  // dentro del ciclo actual
   std::string nombreFuncion;     // Nombre de la función actual
 
+  // Mapa de tipos struct definidos (copiado del TypeChecker)
+  std::unordered_map<std::string, StructInfo> structDefs;
+
+  // Mapa variable → nombre de tipo (para acceso a campos de struct)
+  std::unordered_map<std::string, std::string> varTypes;
+
   GenCodeVisitor(std::ostream &out) : out(out) {}
 
   // Punto de entrada de la generación
@@ -182,6 +237,16 @@ public:
   int visit(FcallExp *fc) override;
   int visit(ReturnStm *r) override;
   int visit(FunDec *fd) override;
+  int visit(StructDec *sd) override;
+  int visit(StructNewExp *sn) override;
+  int visit(FieldAccessExp *fa) override;
+  int computeAddress(FieldAccessExp *fa) override;
+  int visit(ExpMatrix2D *m) override;
+  int visit(Matrix2DIndex *m) override;
+  int computeAddress(Matrix2DIndex *m) override;
+  int visit(AddrOfExp *a) override;
+  int visit(DerefExp *d) override;
+  int computeAddress(DerefExp *d) override;
 };
 
 #endif // VISITOR_H

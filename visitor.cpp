@@ -35,6 +35,16 @@ int SwitchStm::accept(Visitor *v) { return v->visit(this); }
 int UnaryExp::accept(Visitor *v) { return v->visit(this); }
 int IndexExp::accept(Visitor *v) { return v->visit(this); }
 int IndexExp ::computeAddress(Visitor *v) { return v->computeAddress(this); }
+int StructDec::accept(Visitor *v) { return v->visit(this); }
+int StructNewExp::accept(Visitor *v) { return v->visit(this); }
+int FieldAccessExp::accept(Visitor *v) { return v->visit(this); }
+int FieldAccessExp::computeAddress(Visitor *v) { return v->computeAddress(this); }
+int ExpMatrix2D::accept(Visitor *v) { return v->visit(this); }
+int Matrix2DIndex::accept(Visitor *v) { return v->visit(this); }
+int Matrix2DIndex::computeAddress(Visitor *v) { return v->computeAddress(this); }
+int AddrOfExp::accept(Visitor *v)          { return v->visit(this); }
+int DerefExp::accept(Visitor *v)           { return v->visit(this); }
+int DerefExp::computeAddress(Visitor *v)   { return v->computeAddress(this); }
 
 // =============================================================================
 // Implementación de accept()
@@ -57,6 +67,11 @@ int IndexExp ::computeAddress(Visitor *v) { return v->computeAddress(this); }
 // -----------------------------------------------------------------------------
 
 int TypeCheckerVisitor::TypeChecker(Program *program) {
+  // Pasada 0: registrar definiciones de struct
+  for (auto sd : program->sdlist) {
+    sd->accept(this);
+  }
+
   // Primera pasada: registrar todas las funciones y su aridad.
   // Esto permite llamadas hacia adelante (funciones que se usan antes de
   // ser definidas en el orden textual del fuente).
@@ -85,8 +100,10 @@ int TypeCheckerVisitor::visit(FunDec *fd) {
   entorno.add_level();
 
   // Registrar los parámetros como variables del scope actual
-  for (auto &nombre : fd->Pnombres)
-    entorno.add_var(nombre, 0);
+  for (int i = 0; i < (int)fd->Pnombres.size(); i++) {
+    entorno.add_var(fd->Pnombres[i], 0);
+    varTypes[fd->Pnombres[i]] = fd->Ptipos[i];
+  }
 
   // Analizar el cuerpo
   fd->cuerpo->accept(this);
@@ -127,6 +144,7 @@ int TypeCheckerVisitor::visit(VarDec *vd) {
                 << " (en función '" << funcionActual << "').\n";
     }
     entorno.add_var(nombre, 0);
+    varTypes[nombre] = vd->type;
     locales++;
   }
   return 0;
@@ -295,6 +313,101 @@ int TypeCheckerVisitor::visit(SwitchStm *stm) {
   return 0;
 }
 
+// -----------------------------------------------------------------------------
+// visit(StructDec) — registra la definición del struct
+// -----------------------------------------------------------------------------
+
+int TypeCheckerVisitor::visit(StructDec *sd) {
+  StructInfo info;
+  for (auto &f : sd->fields) {
+    info.fieldNames.push_back(f.name);
+    info.fieldTypes.push_back(f.type);
+  }
+  structDefs[sd->name] = info;
+  return 0;
+}
+
+// -----------------------------------------------------------------------------
+// visit(StructNewExp) — verifica que el struct esté definido
+// -----------------------------------------------------------------------------
+
+int TypeCheckerVisitor::visit(StructNewExp *sn) {
+  if (structDefs.count(sn->structName) == 0) {
+    throw std::runtime_error("[TypeChecker] Struct no definido: '" +
+                             sn->structName + "'");
+  }
+  return 0;
+}
+
+// -----------------------------------------------------------------------------
+// visit(FieldAccessExp) — verifica que el campo exista en el struct
+// -----------------------------------------------------------------------------
+
+int TypeCheckerVisitor::visit(FieldAccessExp *fa) {
+  if (varTypes.count(fa->obj) == 0) {
+    throw std::runtime_error("[TypeChecker] Variable '" + fa->obj +
+                             "' sin tipo registrado");
+  }
+  std::string structType = varTypes[fa->obj];
+  if (structDefs.count(structType) == 0) {
+    throw std::runtime_error("[TypeChecker] Tipo '" + structType +
+                             "' no es un struct conocido");
+  }
+  if (structDefs[structType].fieldIndex(fa->field) < 0) {
+    throw std::runtime_error("[TypeChecker] Campo '" + fa->field +
+                             "' no existe en el struct '" + structType + "'");
+  }
+  return 0;
+}
+
+int TypeCheckerVisitor::computeAddress(FieldAccessExp *fa) { return 0; }
+
+// -----------------------------------------------------------------------------
+// visit(ExpMatrix2D) — visita rows y cols
+// -----------------------------------------------------------------------------
+
+int TypeCheckerVisitor::visit(ExpMatrix2D *m) {
+  m->rows->accept(this);
+  m->cols->accept(this);
+  return 0;
+}
+
+// -----------------------------------------------------------------------------
+// visit(Matrix2DIndex) — verifica que la variable esté declarada
+// -----------------------------------------------------------------------------
+
+int TypeCheckerVisitor::visit(Matrix2DIndex *m) {
+  if (!entorno.check(m->name))
+    throw std::runtime_error("[TypeChecker] Variable no declarada: '" + m->name + "'");
+  m->row->accept(this);
+  m->col->accept(this);
+  return 0;
+}
+
+int TypeCheckerVisitor::computeAddress(Matrix2DIndex *m) { return 0; }
+
+// -----------------------------------------------------------------------------
+// visit(AddrOfExp) — verifica que la variable esté declarada
+// -----------------------------------------------------------------------------
+
+int TypeCheckerVisitor::visit(AddrOfExp *a) {
+  if (!entorno.check(a->var))
+    throw std::runtime_error("[TypeChecker] Variable no declarada: '" + a->var +
+                             "' usada en '" + funcionActual + "'");
+  return 0;
+}
+
+// -----------------------------------------------------------------------------
+// visit(DerefExp) — verifica el puntero interno
+// -----------------------------------------------------------------------------
+
+int TypeCheckerVisitor::visit(DerefExp *d) {
+  d->ptr->accept(this);
+  return 0;
+}
+
+int TypeCheckerVisitor::computeAddress(DerefExp *d) { return 0; }
+
 // =============================================================================
 // GenCodeVisitor — Generación de código ensamblador x86-64 (AT&T syntax)
 // =============================================================================
@@ -313,6 +426,8 @@ int TypeCheckerVisitor::visit(SwitchStm *stm) {
 int GenCodeVisitor::generar(Program *program) {
   tipos.TypeChecker(program);
   funcontador = tipos.funcontador;
+  structDefs = tipos.structDefs;
+  varTypes = tipos.varTypes;
   program->accept(this);
   return 0;
 }
@@ -325,6 +440,10 @@ int GenCodeVisitor::visit(Program *program) {
   // Sección de datos
   out << ".data\n";
   out << "print_fmt: .string \"%ld \\n\"\n";
+
+  // Registrar definiciones de struct
+  for (auto sd : program->sdlist)
+    sd->accept(this);
 
   // Recolectar nombres de variables globales
   for (auto dec : program->vdlist)
@@ -357,6 +476,7 @@ int GenCodeVisitor::visit(VarDec *stm) {
       memoria[var] = offset;
       offset -= 8;
     }
+    varTypes[var] = stm->type;
   }
   return 0;
 }
@@ -696,6 +816,7 @@ int GenCodeVisitor::visit(FunDec *f) {
   int nParams = static_cast<int>(f->Pnombres.size());
   for (int i = 0; i < nParams; i++) {
     memoria[f->Pnombres[i]] = offset;
+    varTypes[f->Pnombres[i]] = f->Ptipos[i];
     out << " movq " << argRegs[i] << ", " << offset << "(%rbp)\n";
     offset -= 8;
   }
@@ -815,5 +936,188 @@ int GenCodeVisitor::visit(SwitchStm *stm) {
 
   out << "endswitch_" << lbl << ":\n";
 
+  return 0;
+}
+
+// -----------------------------------------------------------------------------
+// visit(StructDec) — registra la definición del struct (sin emitir código)
+// -----------------------------------------------------------------------------
+
+int GenCodeVisitor::visit(StructDec *sd) {
+  StructInfo info;
+  for (auto &f : sd->fields) {
+    info.fieldNames.push_back(f.name);
+    info.fieldTypes.push_back(f.type);
+  }
+  structDefs[sd->name] = info;
+  return 0;
+}
+
+// -----------------------------------------------------------------------------
+// visit(StructNewExp) — aloca un struct en el heap via malloc
+// -----------------------------------------------------------------------------
+
+int GenCodeVisitor::visit(StructNewExp *sn) {
+  int sz = structDefs[sn->structName].numFields() * 8;
+  out << "  movq $" << sz << ", %rdi\n"
+      << "  call malloc@PLT\n";
+  // puntero queda en %rax
+  return 0;
+}
+
+// -----------------------------------------------------------------------------
+// visit(FieldAccessExp) — lee un campo del struct
+// -----------------------------------------------------------------------------
+
+int GenCodeVisitor::visit(FieldAccessExp *fa) {
+  // Cargar el puntero al struct desde memoria local o global
+  if (memoriaGlobal.count(fa->obj))
+    out << "  movq " << fa->obj << "(%rip), %rax\n";
+  else
+    out << "  movq " << memoria[fa->obj] << "(%rbp), %rax\n";
+  // Calcular el offset del campo y cargar su valor
+  int idx = structDefs[varTypes[fa->obj]].fieldIndex(fa->field);
+  int fieldOff = idx * 8;
+  out << "  movq " << fieldOff << "(%rax), %rax\n";
+  return 0;
+}
+
+// -----------------------------------------------------------------------------
+// computeAddress(FieldAccessExp) — escribe un valor en un campo del struct
+// %rax contiene el valor a asignar (viene de AssignStm)
+// -----------------------------------------------------------------------------
+
+int GenCodeVisitor::computeAddress(FieldAccessExp *fa) {
+  // Guardar el valor a asignar
+  out << "  pushq %rax\n";
+  // Cargar el puntero al struct
+  if (memoriaGlobal.count(fa->obj))
+    out << "  movq " << fa->obj << "(%rip), %rcx\n";
+  else
+    out << "  movq " << memoria[fa->obj] << "(%rbp), %rcx\n";
+  out << "  popq %rax\n";
+  int idx = structDefs[varTypes[fa->obj]].fieldIndex(fa->field);
+  out << "  movq %rax, " << (idx * 8) << "(%rcx)\n";
+  return 0;
+}
+
+// -----------------------------------------------------------------------------
+// visit(ExpMatrix2D) — aloca (rows*cols+2)*8 bytes, guarda rows y cols en cabecera
+// -----------------------------------------------------------------------------
+
+int GenCodeVisitor::visit(ExpMatrix2D *m) {
+  // Evaluate rows → %rax, save on stack
+  m->rows->accept(this);
+  out << "  pushq %rax\n";        // stack: [rows]
+  // Evaluate cols → %rax, save on stack
+  m->cols->accept(this);
+  out << "  pushq %rax\n";        // stack: [cols, rows]  (cols at 0(%rsp), rows at 8(%rsp))
+  // Compute (rows*cols + 2)*8 for malloc
+  out << "  movq 0(%rsp), %rcx\n";   // rcx = cols
+  out << "  imulq 8(%rsp), %rcx\n";  // rcx = rows*cols
+  out << "  addq $2, %rcx\n";        // +2 header slots
+  out << "  imulq $8, %rcx\n";       // *8 bytes
+  out << "  movq %rcx, %rdi\n";
+  out << "  call malloc@PLT\n";      // rax = ptr
+  // Store cols at ptr[1]
+  out << "  popq %rcx\n";            // rcx = cols
+  out << "  movq %rcx, 8(%rax)\n";   // ptr[1] = cols
+  // Store rows at ptr[0]
+  out << "  popq %rcx\n";            // rcx = rows
+  out << "  movq %rcx, 0(%rax)\n";   // ptr[0] = rows
+  // %rax = pointer (left for assignment)
+  return 0;
+}
+
+// -----------------------------------------------------------------------------
+// visit(Matrix2DIndex) — lee element at [row*cols + col + 2]
+// -----------------------------------------------------------------------------
+
+int GenCodeVisitor::visit(Matrix2DIndex *m) {
+  // Load base pointer into %rbx
+  if (memoriaGlobal.count(m->name))
+    out << "  movq " << m->name << "(%rip), %rbx\n";
+  else
+    out << "  movq " << memoria[m->name] << "(%rbp), %rbx\n";
+  // Load cols from ptr[1] into %r10
+  out << "  movq 8(%rbx), %r10\n";
+  // Evaluate row → %rax
+  m->row->accept(this);
+  out << "  imulq %r10, %rax\n";   // rax = row * cols
+  out << "  pushq %rax\n";
+  // Evaluate col → %rax
+  m->col->accept(this);
+  out << "  popq %rcx\n";
+  out << "  addq %rcx, %rax\n";    // rax = row*cols + col
+  out << "  addq $2, %rax\n";      // skip 2-element header
+  out << "  salq $3, %rax\n";      // * 8 bytes
+  out << "  addq %rbx, %rax\n";    // rax = address of element
+  out << "  movq (%rax), %rax\n";  // load value
+  return 0;
+}
+
+// -----------------------------------------------------------------------------
+// computeAddress(Matrix2DIndex) — stores value (in %rax) to element [row*cols+col+2]
+// -----------------------------------------------------------------------------
+
+int GenCodeVisitor::computeAddress(Matrix2DIndex *m) {
+  out << "  pushq %rax\n";          // save value to store
+  // Load base pointer into %rbx
+  if (memoriaGlobal.count(m->name))
+    out << "  movq " << m->name << "(%rip), %rbx\n";
+  else
+    out << "  movq " << memoria[m->name] << "(%rbp), %rbx\n";
+  // Load cols from ptr[1]
+  out << "  movq 8(%rbx), %r10\n";
+  // Evaluate row → %rax
+  m->row->accept(this);
+  out << "  imulq %r10, %rax\n";
+  out << "  pushq %rax\n";
+  // Evaluate col → %rax
+  m->col->accept(this);
+  out << "  popq %rcx\n";
+  out << "  addq %rcx, %rax\n";
+  out << "  addq $2, %rax\n";
+  out << "  salq $3, %rax\n";
+  out << "  addq %rbx, %rax\n";    // rax = address of element
+  out << "  movq %rax, %rcx\n";    // rcx = target address
+  out << "  popq %rax\n";          // restore value to store
+  out << "  movq %rax, (%rcx)\n";  // store value
+  return 0;
+}
+
+// -----------------------------------------------------------------------------
+// visit(AddrOfExp) — &var → load address of variable into %rax
+// -----------------------------------------------------------------------------
+
+int GenCodeVisitor::visit(AddrOfExp *a) {
+  if (memoriaGlobal.count(a->var))
+    out << "  leaq " << a->var << "(%rip), %rax\n";
+  else
+    out << "  leaq " << memoria[a->var] << "(%rbp), %rax\n";
+  return 0;
+}
+
+// -----------------------------------------------------------------------------
+// visit(DerefExp) — *ptr → load 64-bit value at address held in ptr
+// -----------------------------------------------------------------------------
+
+int GenCodeVisitor::visit(DerefExp *d) {
+  d->ptr->accept(this);             // %rax = pointer value (an address)
+  out << "  movq (%rax), %rax\n";  // load value at *ptr
+  return 0;
+}
+
+// -----------------------------------------------------------------------------
+// computeAddress(DerefExp) — *ptr = value → store value at address held in ptr
+// %rax contains the value to store (from AssignStm)
+// -----------------------------------------------------------------------------
+
+int GenCodeVisitor::computeAddress(DerefExp *d) {
+  out << "  pushq %rax\n";          // save value to store
+  d->ptr->accept(this);             // %rax = pointer value (target address)
+  out << "  movq %rax, %rcx\n";    // %rcx = target address
+  out << "  popq %rax\n";           // restore value
+  out << "  movq %rax, (%rcx)\n";  // store value at *ptr
   return 0;
 }

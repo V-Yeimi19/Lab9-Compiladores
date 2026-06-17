@@ -41,9 +41,9 @@ std::string Token::typeName(Type t) {
   case RBRACKET:
     return "']'";
   case LBRACE:
-    return "'['";
+    return "'{'";
   case RBRACE:
-    return "']'";
+    return "'}'";
   case SEMICOL:
     return "';'";
   case COMA:
@@ -66,6 +66,8 @@ std::string Token::typeName(Type t) {
     return "'||'";
   case NOT:
     return "'!'";
+  case ADDR:
+    return "'&'";
   case ASSIGN:
     return "'='";
   case NUM:
@@ -116,6 +118,12 @@ std::string Token::typeName(Type t) {
     return "'endfun'";
   case RETURN:
     return "'return'";
+  case STRUCT:
+    return "'struct'";
+  case ENDSTRUCT:
+    return "'endstruct'";
+  case DOT:
+    return "'.'";
   case ERR:
     return "<error léxico>";
   case END:
@@ -184,6 +192,9 @@ std::ostream &operator<<(std::ostream &outs, const Token &tok) {
     break;
   case Token::NOT:
     outs << "TOKEN(NOT, \"" << tok.text << "\")";
+    break;
+  case Token::ADDR:
+    outs << "TOKEN(ADDR, \"" << tok.text << "\")";
     break;
   case Token::ASSIGN:
     outs << "TOKEN(ASSIGN, \"" << tok.text << "\")";
@@ -262,6 +273,15 @@ std::ostream &operator<<(std::ostream &outs, const Token &tok) {
     break;
   case Token::NEW:
     outs << "TOKEN(NEW, \"" << tok.text << "\")";
+    break;
+  case Token::STRUCT:
+    outs << "TOKEN(STRUCT, \"" << tok.text << "\")";
+    break;
+  case Token::ENDSTRUCT:
+    outs << "TOKEN(ENDSTRUCT, \"" << tok.text << "\")";
+    break;
+  case Token::DOT:
+    outs << "TOKEN(DOT, \"" << tok.text << "\")";
     break;
   case Token::ERR:
     outs << "TOKEN(ERR, \"" << tok.text << "\")";

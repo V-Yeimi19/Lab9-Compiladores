@@ -106,12 +106,16 @@ Token *Scanner::nextToken() {
       return new Token(Token::NEW, input, first, current - first);
     if (lexema == "return")
       return new Token(Token::RETURN, input, first, current - first);
+    if (lexema == "struct")
+      return new Token(Token::STRUCT, input, first, current - first);
+    if (lexema == "endstruct")
+      return new Token(Token::ENDSTRUCT, input, first, current - first);
 
     return new Token(Token::ID, input, first, current - first);
   }
 
   // ---- Operadores y delimitadores ----
-  if (strchr("+/-*()[]{};=<>!&|,", c)) {
+  if (strchr("+/-*()[]{};=<>!&|,.", c)) {
     Token *token = nullptr;
     switch (c) {
     case '+':
@@ -203,13 +207,16 @@ Token *Scanner::nextToken() {
         current++;
       }
       break;
+    case '.':
+      token = new Token(Token::DOT, c);
+      current++;
+      break;
     case '&':
       if (current + 1 < input.length() && input[current + 1] == '&') {
         token = new Token(Token::AND, input, first, 2);
         current += 2;
       } else {
-        // Carácter & no es reconocido por sí solo
-        token = new Token(Token::ERR, c);
+        token = new Token(Token::ADDR, c);
         current++;
       }
       break;

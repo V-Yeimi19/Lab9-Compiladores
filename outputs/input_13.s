@@ -1,6 +1,5 @@
 .data
 print_fmt: .string "%ld \n"
-ia: .quad 0
 
 .text
 
@@ -8,54 +7,48 @@ ia: .quad 0
 main:
  pushq %rbp
  movq %rsp, %rbp
- subq $0, %rsp
- movq $3, %rax
- movq $8, %rcx
-  imulq %rcx, %rax
-  movq %rax, %rdi
+ subq $8, %rsp
+  movq $24, %rdi
   call malloc@PLT
-  movq %rax, ia(%rip)
- movq $2, %rax
   pushq %rax
+  pushq %rax
+ movq $5, %rax
+  movq %rax, %rcx
+  popq %rax
+  movq %rcx, 0(%rax)
+  pushq %rax
+ movq $6, %rax
+  movq %rax, %rcx
+  popq %rax
+  movq %rcx, 8(%rax)
+  pushq %rax
+ movq $7, %rax
+  movq %rax, %rcx
+  popq %rax
+  movq %rcx, 16(%rax)
+  popq %rax
+  movq %rax, -8(%rbp)
+ movq $2, %rax
+  lea -8(%rbp), %rbx
+  movq (%rbx), %rbx
+  salq $3, %rax
+  addq %rax, %rbx
+  movq (%rbx), %rax
+ movq %rax, %rsi
+ leaq print_fmt(%rip), %rdi
  movq $0, %rax
-  movq %rax, %rdi
-  popq %rax
-  movq %rax, %rcx
-  movq ia(%rip), %rax
-  movq %rcx, (%rax, %rdi, 8)
- movq $2, %rax
- pushq %rax
- movq $3, %rax
- movq %rax, %rcx
- popq %rax
- imulq %rcx, %rax
-  pushq %rax
- movq $1, %rax
-  movq %rax, %rdi
-  popq %rax
-  movq %rax, %rcx
-  movq ia(%rip), %rax
-  movq %rcx, (%rax, %rdi, 8)
- movq $2, %rax
- pushq %rax
- movq $3, %rax
- movq %rax, %rcx
- popq %rax
- imulq %rcx, %rax
- pushq %rax
- movq $4, %rax
- movq %rax, %rcx
- popq %rax
- subq %rcx, %rax
+ call printf@PLT
+ movq $9, %rax
   pushq %rax
  movq $2, %rax
   movq %rax, %rdi
   popq %rax
   movq %rax, %rcx
-  movq ia(%rip), %rax
+  movq -8(%rbp), %rax
   movq %rcx, (%rax, %rdi, 8)
  movq $0, %rax
-  movq ia(%rip), %rbx
+  lea -8(%rbp), %rbx
+  movq (%rbx), %rbx
   salq $3, %rax
   addq %rax, %rbx
   movq (%rbx), %rax
@@ -64,7 +57,8 @@ main:
  movq $0, %rax
  call printf@PLT
  movq $1, %rax
-  movq ia(%rip), %rbx
+  lea -8(%rbp), %rbx
+  movq (%rbx), %rbx
   salq $3, %rax
   addq %rax, %rbx
   movq (%rbx), %rax
@@ -73,7 +67,8 @@ main:
  movq $0, %rax
  call printf@PLT
  movq $2, %rax
-  movq ia(%rip), %rbx
+  lea -8(%rbp), %rbx
+  movq (%rbx), %rbx
   salq $3, %rax
   addq %rax, %rbx
   movq (%rbx), %rax

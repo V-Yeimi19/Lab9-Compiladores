@@ -1,0 +1,19 @@
+fun int main()
+    var list mat;
+    var int i, j, val;
+    mat = new int[3][3];
+    i = 0;
+    while i < 3 do
+        j = 0;
+        while j < 3 do
+            val = i * 3 + j;
+            mat[i][j] = val;
+            j = j + 1
+        endwhile;
+        i = i + 1
+    endwhile;
+    print(mat[0][0]);
+    print(mat[1][2]);
+    print(mat[2][1]);
+    return(0)
+endfun
