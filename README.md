@@ -1,6 +1,5 @@
-# Compilador Fun — CS3402 Compiladores, UTEC 2026-1
-
-Compilador para el lenguaje **Fun** (archivos `.fun`) que genera ensamblador x86-64 en sintaxis AT&T para Linux. El compilador está escrito en C++ e implementa todas las fases de manera manual: análisis léxico, análisis sintáctico, análisis semántico y generación de código.
+# Lab9 - Compiladores
+Compilador que genera ensamblador x86-64 en sintaxis AT&T para Linux. El compilador está escrito en C++ e implementa todas las fases de manera manual: análisis léxico, análisis sintáctico, análisis semántico y generación de código.
 
 ---
 
