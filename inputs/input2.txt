@@ -1,11 +1,17 @@
+struct Punto {
+    var int x;
+    var int y
+};
+
 fun int main()
-    var int x,y;
-    x = 20;
-    y = 10;
-    if (x < y) || (x == 20) then
-        print(10)
-    else
-        print(0)
-    endif;
+    var Punto p;
+    p = new Punto {};
+    p.x = 2;
+    p.y = 3;
+    print(p.x);
+    print(p.y);
     return(0)
 endfun
+
+
+

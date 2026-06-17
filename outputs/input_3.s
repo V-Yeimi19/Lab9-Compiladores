@@ -8,49 +8,48 @@ main:
  pushq %rbp
  movq %rsp, %rbp
  subq $8, %rsp
- movq $1, %rax
+ movq $2, %rax
+ movq $8, %rcx
+  imulq %rcx, %rax
+  movq %rax, %rdi
+  call malloc@PLT
   movq %rax, -8(%rbp)
-while_0:
- movq -8(%rbp), %rax
- pushq %rax
- movq $10, %rax
- movq %rax, %rcx
- popq %rax
- cmpq %rcx, %rax
+ movq $2, %rax
+  pushq %rax
  movq $0, %rax
- setl %al
- movzbq %al, %rax
- cmpq $0, %rax
- je endwhile_0
- movq -8(%rbp), %rax
+  movq %rax, %rdi
+  popq %rax
+  movq %rax, %rcx
+  movq -8(%rbp), %rax
+  movq %rcx, (%rax, %rdi, 8)
+ movq $3, %rax
+  pushq %rax
+ movq $1, %rax
+  movq %rax, %rdi
+  popq %rax
+  movq %rax, %rcx
+  movq -8(%rbp), %rax
+  movq %rcx, (%rax, %rdi, 8)
+ movq $0, %rax
+  lea -8(%rbp), %rbx
+  movq (%rbx), %rbx
+  salq $3, %rax
+  addq %rax, %rbx
+  movq (%rbx), %rax
  movq %rax, %rsi
  leaq print_fmt(%rip), %rdi
  movq $0, %rax
  call printf@PLT
- movq -8(%rbp), %rax
- pushq %rax
- movq $5, %rax
- movq %rax, %rcx
- popq %rax
- cmpq %rcx, %rax
- movq $0, %rax
- sete %al
- movzbq %al, %rax
- cmpq $0, %rax
- je else_1
- jmp endwhile_0
- jmp endif_1
-else_1:
-endif_1:
- movq -8(%rbp), %rax
- pushq %rax
  movq $1, %rax
- movq %rax, %rcx
- popq %rax
- addq %rcx, %rax
-  movq %rax, -8(%rbp)
- jmp while_0
-endwhile_0:
+  lea -8(%rbp), %rbx
+  movq (%rbx), %rbx
+  salq $3, %rax
+  addq %rax, %rbx
+  movq (%rbx), %rax
+ movq %rax, %rsi
+ leaq print_fmt(%rip), %rdi
+ movq $0, %rax
+ call printf@PLT
  movq $0, %rax
  jmp .end_main
 .end_main:

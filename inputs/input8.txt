@@ -1,14 +1,18 @@
+struct Rectangulo {
+    var int ancho;
+    var int alto
+};
+
+fun int area(Rectangulo r)
+    return(r.ancho * r.alto)
+endfun
+
 
 fun int main()
-    var int x,y;
-    x = 10;
-    y = 20;
-    print(x < y);
-    print(x <= y);
-    print(y > x);
-    print(y >= x);
-    print(x == y);
-    print(x != y);
+    var Rectangulo caja;
+    caja = new Rectangulo {};
+    caja.ancho = 3;
+    caja.alto = 4;
+    print(area(caja));
     return(0)
-
 endfun
